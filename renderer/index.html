@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>数据库测试数据管理工具</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#2563eb',
+                        secondary: '#64748b'
+                    },
+                    borderRadius: {
+                        'none': '0px',
+                        'sm': '2px',
+                        DEFAULT: '4px',
+                        'md': '8px',
+                        'lg': '12px',
+                        'xl': '16px',
+                        '2xl': '20px',
+                        '3xl': '24px',
+                        'full': '9999px',
+                        'button': '4px'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            min-height: 1024px;
+            overflow: hidden;
+        }
+        .resize-x {
+            resize: horizontal;
+        }
+        #databaseList .absolute {
+            transition: background-color 0.2s;
+        }
+        #databaseList:hover .absolute {
+            background-color: rgba(37, 99, 235, 0.1);
+        }
+        .menu-item:hover {
+            background-color: rgba(37, 99, 235, 0.1);
+        }
+        .tree-item {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tree-item:not(.tree-item-selected) {
+            background-color: transparent;
+        }
+        .tree-item-selected:not(:has(.fa-chevron-right)) {
+            background-color: rgba(37, 99, 235, 0.1);
+        }
+        .tree-item[onclick] {
+            user-select: none;
+        }
+        .tree-item .fa-chevron-right {
+            transition: transform 0.2s ease;
+        }
+        .tree-item:not(.tree-content.hidden) > div > .fa-chevron-right {
+            transform: rotate(90deg);
+        }
+        .console-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        .console-panel::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 3px;
+        }
+        .console-panel::-webkit-scrollbar-track {
+            background-color: transparent;
+        }
+        input:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+        }
+    </style>
+    <script>
+        function initConsoleResize(e) {
+            const console = document.getElementById('console');
+            const startHeight = console.offsetHeight;
+            const startY = e.clientY;
+            function onMouseMove(e) {
+                const delta = startY - e.clientY;
+                const newHeight = Math.min(Math.max(100, startHeight + delta), window.innerHeight - 200);
+                console.style.height = newHeight + 'px';
+            }
+            function onMouseUp() {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            }
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        }
+        function showTestResult() {
+            const testResult = document.getElementById('testResult');
+            const successResult = document.getElementById('successResult');
+            const errorResult = document.getElementById('errorResult');
+            testResult.classList.remove('hidden');
+            successResult.classList.remove('hidden');
+            errorResult.classList.add('hidden');
+            const progressBar = successResult.querySelector('.progress-bar');
+            progressBar.style.width = '100%';
+            setTimeout(() => {
+                progressBar.style.width = '0';
+            }, 50);
+            setTimeout(() => {
+                testResult.classList.add('hidden');
+                successResult.classList.add('hidden');
+                const progressBar = successResult.querySelector('.progress-bar');
+                progressBar.style.width = '100%';
+            }, 3000);
+        }
+        function switchTab(panelId) {
+            // 隐藏所有面板
+            document.querySelectorAll('[id$="Panel"]').forEach(panel => {
+                panel.classList.add('hidden');
+            });
+            // 显示选中的面板
+            document.getElementById(panelId).classList.remove('hidden');
+            // 更新按钮样式
+            const settingButtons = document.querySelectorAll('.space-y-4 button');
+            settingButtons.forEach(button => {
+                if (button.getAttribute('onclick').includes(panelId)) {
+                    button.classList.remove('text-gray-700', 'bg-gray-100');
+                    button.classList.add('text-white', 'bg-primary');
+                } else {
+                    button.classList.remove('text-white', 'bg-primary');
+                    button.classList.add('text-gray-700', 'bg-gray-100');
+                }
+            });
+        }
+        function clearFormInputs() {
+            const inputs = document.querySelectorAll('.flex-1.p-6 input');
+            inputs.forEach(input => {
+                input.value = '';
+            });
+            // 移除列表项的选中样式
+            document.querySelectorAll('#configList .bg-primary\\/10').forEach(item => {
+                item.classList.remove('bg-primary/10');
+            });
+            // 禁用删除按钮
+            document.getElementById('deleteBtn').disabled = true;
+            // 清空 Schemas 列表
+            const schemaContainer = document.querySelector('#schemaPanel .border.border-gray-200');
+            if (schemaContainer) {
+                schemaContainer.innerHTML = '';
+            }
+        }
+        function selectConfig(element) {
+            // 移除所有选中样式
+            document.querySelectorAll('#configList .bg-primary\\/10').forEach(item => {
+                item.classList.remove('bg-primary/10');
+            });
+            // 添加选中样式
+            element.classList.add('bg-primary/10');
+            // 启用删除按钮
+            document.getElementById('deleteBtn').disabled = false;
+            // 获取配置名称
+            const configName = element.textContent;
+            // 根据配置名称设置对应的表单值
+            if(configName === '本地开发库') {
+                document.querySelectorAll('.flex-1.p-6 input').forEach(input => {
+                    switch(input.previousElementSibling?.textContent) {
+                        case '别名':
+                            input.value = '本地开发库';
+                            break;
+                        case '备注':
+                            input.value = '本地开发使用的数据库';
+                            break;
+                        case 'Host':
+                            input.value = 'localhost';
+                            break;
+                        case 'Port':
+                            input.value = '5432';
+                            break;
+                        case 'User':
+                            input.value = 'postgres';
+                            break;
+                        case 'Password':
+                            input.value = '123456';
+                            break;
+                        case 'Database':
+                            input.value = 'testdb';
+                            break;
+                    }
+                });
+                // 更新 Schemas 列表
+                const schemaContainer = document.querySelector('#schemaPanel .border.border-gray-200');
+                schemaContainer.innerHTML = `
+<div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+<input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" checked onclick="event.stopPropagation()">
+<span class="text-sm text-gray-700">public</span>
+</div>
+<div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+<input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" checked onclick="event.stopPropagation()">
+<span class="text-sm text-gray-700">private</span>
+</div>
+`;
+            } else if(configName === '测试环境') {
+                document.querySelectorAll('.flex-1.p-6 input').forEach(input => {
+                    switch(input.previousElementSibling?.textContent) {
+                        case '别名':
+                            input.value = '测试环境';
+                            break;
+                        case '备注':
+                            input.value = '测试服务器数据库';
+                            break;
+                        case 'Host':
+                            input.value = '192.168.1.100';
+                            break;
+                        case 'Port':
+                            input.value = '5432';
+                            break;
+                        case 'User':
+                            input.value = 'test_user';
+                            break;
+                        case 'Password':
+                            input.value = 'test123';
+                            break;
+                        case 'Database':
+                            input.value = 'test_db';
+                            break;
+                    }
+                });
+                // 更新 Schemas 列表
+                const schemaContainer = document.querySelector('#schemaPanel .border.border-gray-200');
+                schemaContainer.innerHTML = `
+<div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+<input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" checked onclick="event.stopPropagation()">
+<span class="text-sm text-gray-700">public</span>
+</div>
+<div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+<input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" onclick="event.stopPropagation()">
+<span class="text-sm text-gray-700">test_schema</span>
+</div>
+`;
+            }
+        }
+        function deleteConfig() {
+            const selectedConfig = document.querySelector('#configList .bg-primary\\/10');
+            if (selectedConfig) {
+                // 从配置列表中删除
+                selectedConfig.remove();
+                // 从左侧数据库列表中删除对应项
+                const dbName = selectedConfig.textContent;
+                const dbItem = document.querySelector(`.tree-item:has(span:contains("${dbName}"))`);
+                if (dbItem) {
+                    dbItem.remove();
+                }
+                // 清空表单
+                clearFormInputs();
+                // 禁用删除按钮
+                document.getElementById('deleteBtn').disabled = true;
+            }
+        }
+        function toggleMenu(event, menuId) {
+            event.stopPropagation();
+            // 关闭所有菜单
+            document.querySelectorAll('[id$="Menu"]').forEach(menu => {
+                if(menu.id !== menuId) {
+                    menu.classList.add('hidden');
+                }
+            });
+            // 切换当前菜单
+            const menu = document.getElementById(menuId);
+            menu.classList.toggle('hidden');
+        }
+        // 点击页面其他地方关闭菜单
+        document.addEventListener('click', function(event) {
+            document.querySelectorAll('[id$="Menu"]').forEach(menu => {
+                if (!menu.contains(event.target) && !event.target.matches('[onclick*="toggleMenu"]')) {
+                    menu.classList.add('hidden');
+                }
+            });
+        });
+        function refreshTree() {
+            // 折叠所有项
+            document.querySelectorAll('.tree-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            // 移除所有选中状态
+            document.querySelectorAll('.tree-item-selected').forEach(item => {
+                item.classList.remove('tree-item-selected');
+            });
+        }
+        function selectTreeItem(element) {
+            // 移除所有选中样式
+            document.querySelectorAll('.tree-item-selected').forEach(item => {
+                item.classList.remove('tree-item-selected');
+            });
+            // 只有第三级（没有箭头的项）才添加选中样式
+            if (!element.querySelector('.fa-chevron-right')) {
+                element.classList.add('tree-item-selected');
+            }
+        }
+        // 阻止事件冒泡
+        function handleTreeItemClick(event, element) {
+            event.stopPropagation();
+            const hasChildren = element.querySelector('.tree-content');
+            const isThirdLevel = !element.querySelector('.fa-chevron-right');
+            // 如果是第三级(没有箭头的项)，只处理选中状态
+            if (isThirdLevel) {
+                selectTreeItem(element);
+                return;
+            }
+            // 非第三级的处理
+            if (hasChildren) {
+                // 展开/折叠当前项
+                const treeContent = element.querySelector('.tree-content');
+                if (treeContent.classList.contains('hidden')) {
+                    // 展开当前项
+                    treeContent.classList.remove('hidden');
+                } else {
+                    // 折叠当前项及其所有子项
+                    const allSubContents = element.querySelectorAll('.tree-content');
+                    allSubContents.forEach(content => {
+                        content.classList.add('hidden');
+                    });
+                }
+            }
+            // 选中当前项
+            selectTreeItem(element);
+        }
+        // 添加控制台拖拽功能
+        document.addEventListener('DOMContentLoaded', function() {
+            const consoleResizer = document.querySelector('#console .cursor-row-resize');
+            if(consoleResizer) {
+                consoleResizer.addEventListener('mousedown', initConsoleResize);
+            }
+        });
+    </script>
+</head>
+<body class="bg-gray-50">
+<div class="flex flex-col h-screen">
+    <div class="bg-white border-b border-gray-200">
+        <div class="flex items-center px-4 h-10">
+            <div class="flex items-center space-x-4">
+                <div class="relative">
+                    <button onclick="toggleMenu(event, 'fileMenu')" class="menu-item px-3 py-1 rounded-button text-gray-700 hover:text-primary">文件</button>
+                    <div id="fileMenu" class="absolute hidden w-32 bg-white shadow-lg rounded-md mt-1 py-1 z-50">
+                        <div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer" onclick="document.querySelector('.fixed.inset-0').style.display = 'flex'; document.querySelectorAll('[id$=\'Menu\']').forEach(menu => menu.classList.add('hidden'));">设置</div>
+                    </div>
+                </div>
+                <div class="relative">
+                    <button onclick="toggleMenu(event, 'toolMenu')" class="menu-item px-3 py-1 rounded-button text-gray-700 hover:text-primary">工具</button>
+                    <div id="toolMenu" class="absolute hidden w-32 bg-white shadow-lg rounded-md mt-1 py-1 z-50">
+                        <div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer" onclick="document.getElementById('databaseList').classList.toggle('hidden')">数据库列表</div>
+                        <div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer" onclick="document.getElementById('console').classList.toggle('hidden')">控制条</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="flex-1 flex relative">
+        <!-- 左侧数据库列表 -->
+        <div class="w-64 bg-white border-r border-gray-200 flex flex-col hidden resize-x overflow-hidden" id="databaseList" style="min-width: 250px; max-width: 600px;">
+            <div class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20" onmousedown="initDatabaseListResize(event)"></div>
+            <div class="p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <span class="text-sm font-medium text-gray-700">数据库列表</span>
+                    <button class="p-1 text-gray-400 hover:text-primary rounded-button" onclick="refreshTree()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div class="space-y-1">
+                    <div class="tree-item px-3 py-2 text-sm text-gray-700 rounded-md cursor-pointer" onclick="handleTreeItemClick(event, this)">
+                        <div class="flex items-center">
+                            <div class="flex-1 flex items-center">
+                                <i class="fas fa-database mr-2 text-gray-400"></i>
+                                <span>本地开发库</span>
+                            </div>
+                            <i class="fas fa-chevron-right text-gray-400 transition-transform w-4 flex items-center justify-center" style="transform: rotate(0deg); display: none"></i>
+                        </div>
+                        <div class="tree-content hidden ml-6 mt-2 space-y-1">
+                            <div class="tree-item px-3 py-2 text-sm text-gray-700 rounded-md cursor-pointer" onclick="handleTreeItemClick(event, this)">
+                                <div class="flex items-center">
+                                    <div class="flex-1 flex items-center">
+                                        <i class="fas fa-folder mr-2 text-gray-400"></i>
+                                        <span>public</span>
+                                    </div>
+                                    <i class="fas fa-chevron-right text-gray-400 transition-transform w-4 flex items-center justify-center" style="transform: rotate(0deg); display: none"></i>
+                                </div>
+                                <div class="tree-content hidden ml-6 mt-2 space-y-1">
+                                    <div class="tree-item flex items-center text-gray-600 px-3 py-2 rounded-md" onclick="handleTreeItemClick(event, this)">
+                                        <i class="fas fa-table mr-2 text-gray-400"></i>
+                                        <span>users</span>
+                                    </div>
+                                    <div class="tree-item flex items-center text-gray-600 px-3 py-2 rounded-md" onclick="handleTreeItemClick(event, this)">
+                                        <i class="fas fa-table mr-2 text-gray-400"></i>
+                                        <span>orders</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="tree-item px-3 py-2 text-sm text-gray-700 rounded-md cursor-pointer" onclick="handleTreeItemClick(event, this)">
+                                <div class="flex items-center">
+                                    <div class="flex-1 flex items-center">
+                                        <i class="fas fa-folder mr-2 text-gray-400"></i>
+                                        <span>private</span>
+                                    </div>
+                                    <i class="fas fa-chevron-right text-gray-400 transition-transform w-4 flex items-center justify-center" style="transform: rotate(0deg); display: none"></i>
+                                </div>
+                                <div class="tree-content hidden ml-6 mt-2 space-y-1">
+                                    <div class="tree-item flex items-center text-gray-600 px-3 py-2 rounded-md" onclick="handleTreeItemClick(event, this)">
+                                        <i class="fas fa-table mr-2 text-gray-400"></i>
+                                        <span>logs</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tree-item px-3 py-2 text-sm text-gray-700 rounded-md cursor-pointer" onclick="handleTreeItemClick(event, this)">
+                        <div class="flex items-center">
+                            <div class="flex-1 flex items-center">
+                                <i class="fas fa-database mr-2 text-gray-400"></i>
+                                <span>测试环境</span>
+                            </div>
+                            <i class="fas fa-chevron-right text-gray-400 transition-transform w-4 flex items-center justify-center" style="transform: rotate(0deg);display: none"></i>
+                        </div>
+                        <div class="tree-content hidden ml-6 mt-2 space-y-1">
+                            <div class="tree-item px-3 py-2 text-sm text-gray-700 rounded-md cursor-pointer" onclick="handleTreeItemClick(event, this)">
+                                <div class="flex items-center">
+                                    <div class="flex-1 flex items-center">
+                                        <i class="fas fa-folder mr-2 text-gray-400"></i>
+                                        <span>public</span>
+                                    </div>
+                                    <i class="fas fa-chevron-right text-gray-400 transition-transform w-4 flex items-center justify-center" style="transform: rotate(0deg);display: none"></i>
+                                </div>
+                                <div class="tree-content hidden ml-6 mt-2 space-y-1">
+                                    <div class="tree-item flex items-center text-gray-600 px-3 py-2 rounded-md" onclick="handleTreeItemClick(event, this)">
+                                        <i class="fas fa-table mr-2 text-gray-400"></i>
+                                        <span>test_users</span>
+                                    </div>
+                                    <div class="tree-item flex items-center text-gray-600 px-3 py-2 rounded-md" onclick="handleTreeItemClick(event, this)">
+                                        <i class="fas fa-table mr-2 text-gray-400"></i>
+                                        <span>test_orders</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- 操作面板、控制台 -->
+        <div class="flex-1 flex flex-col">
+            <!-- 操作面板  -->
+            <div class="flex-1 p-6 h-full overflow-y-auto">
+                <div class="bg-white rounded-lg shadow-sm flex items-center justify-center h-full">
+                    <div class="text-center text-gray-500">
+                        <i class="fas fa-keyboard text-6xl mb-4"></i>
+                        <div class="text-lg mb-2">欢迎使用数据库测试数据管理工具</div>
+                        <div class="text-sm text-gray-400">
+                            <div class="mb-1"><span class="px-2 py-1 bg-gray-100 rounded shadow-sm">Ctrl</span> + <span class="px-2 py-1 bg-gray-100 rounded shadow-sm">D</span> - 打开/关闭数据库列表</div>
+                            <div class="mb-1"><span class="px-2 py-1 bg-gray-100 rounded shadow-sm">Ctrl</span> + <span class="px-2 py-1 bg-gray-100 rounded shadow-sm">L</span> - 打开/关闭控制台</div>
+                            <div class="mb-1"><span class="px-2 py-1 bg-gray-100 rounded shadow-sm">Ctrl</span> + <span class="px-2 py-1 bg-gray-100 rounded shadow-sm">,</span> - 打开设置</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 控制台  -->
+            <div class="h-48 border-t border-gray-200 bg-white hidden relative" id="console">
+                <div class="absolute left-0 right-0 -top-1 h-1 cursor-row-resize hover:bg-primary/20"></div>
+                <div class="flex items-center justify-between px-4 py-2 border-b border-gray-200">
+                    <span class="text-sm font-medium text-gray-700">控制台</span>
+                    <button class="p-1 text-gray-400 hover:text-red-500 rounded-button" onclick="document.querySelector('.console-panel .space-y-2').innerHTML = ''">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+                <div class="console-panel h-[calc(100%-36px)] overflow-y-auto p-4">
+                    <div class="space-y-2 text-sm">
+                        <div class="text-gray-500">[2024-01-20 10:30:15] 连接数据库成功</div>
+                        <div class="text-gray-500">[2024-01-20 10:30:16] 获取表结构成功</div>
+                        <div class="text-red-500">[2024-01-20 10:30:17] 错误：数据格式不正确</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" style="display: none;" onclick="if(event.target === this) this.style.display = 'none'">
+    <div class="bg-white w-[800px] h-[600px] rounded-lg shadow-xl">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h3 class="text-lg font-medium text-gray-900">数据库设置</h3>
+            <button onclick="this.closest('.fixed').style.display = 'none'" class="p-1 text-gray-400 hover:text-gray-500 rounded-button">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="flex divide-x divide-gray-200 h-[calc(100%-57px)]">
+            <div class="w-64 h-full overflow-y-auto">
+                <div class="p-4 border-b border-gray-200">
+                    <div class="flex items-center space-x-2">
+                        <button onclick="clearFormInputs()" class="flex-1 px-3 py-1.5 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-button">
+                            添加
+                        </button>
+                        <button id="deleteBtn" onclick="deleteConfig()" disabled class="flex-1 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-button disabled:opacity-50 disabled:cursor-not-allowed">
+                            删除
+                        </button>
+                    </div>
+                </div>
+                <div class="p-4 space-y-2" id="configList">
+                    <div class="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md cursor-pointer bg-primary/10" onclick="selectConfig(this)">本地开发库</div>
+                    <div class="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md cursor-pointer" onclick="selectConfig(this)">测试环境</div>
+                </div>
+            </div>
+            <div class="flex-1 p-6 h-full overflow-y-auto relative">
+                <div class="space-y-6">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">别名</label>
+                            <input type="text" class="w-full px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-md" value="本地开发库">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">备注</label>
+                            <input type="text" class="w-full px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-md" value="本地开发使用的数据库">
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="flex space-x-4">
+                            <button class="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-button" onclick="switchTab('configPanel')">配置</button>
+                            <button class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-primary/90 rounded-button" onclick="switchTab('schemaPanel')">模式</button>
+                        </div>
+                        <div id="configPanel" class="space-y-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Host</label>
+                                    <input type="text" class="w-full px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-md" value="localhost">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                                    <input type="text" class="w-full px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-md" value="5432">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">User</label>
+                                    <input type="text" class="w-full px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-md" value="postgres">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                    <input type="password" class="w-full px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-md" value="123456">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Database</label>
+                                <input type="text" class="w-full px-3 py-2 text-sm text-gray-700 border border-gray-200 rounded-md" value="testdb">
+                            </div>
+                        </div>
+                        <div id="schemaPanel" class="space-y-4 hidden">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">可用 Schemas</label>
+                                <div class="border border-gray-200 rounded-md max-h-[200px] overflow-y-auto">
+                                    <div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+                                        <input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" checked onclick="event.stopPropagation()">
+                                        <span class="text-sm text-gray-700">public</span>
+                                    </div>
+                                    <div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+                                        <input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" onclick="event.stopPropagation()">
+                                        <span class="text-sm text-gray-700">customer</span>
+                                    </div>
+                                    <div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+                                        <input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" onclick="event.stopPropagation()">
+                                        <span class="text-sm text-gray-700">order</span>
+                                    </div>
+                                    <div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+                                        <input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" onclick="event.stopPropagation()">
+                                        <span class="text-sm text-gray-700">product</span>
+                                    </div>
+                                    <div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+                                        <input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" onclick="event.stopPropagation()">
+                                        <span class="text-sm text-gray-700">inventory</span>
+                                    </div>
+                                    <div class="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer" onclick="this.querySelector('input').click()">
+                                        <input type="checkbox" class="mr-2 rounded text-primary focus:ring-primary" onclick="event.stopPropagation()">
+                                        <span class="text-sm text-gray-700">reporting</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="absolute bottom-6 left-6">
+                        <div id="testResult" class="absolute bottom-12 left-0 w-64 bg-white rounded-lg shadow-lg hidden">
+                            <div id="successResult" class="bg-green-50 border border-green-200 rounded-lg p-3 hidden relative overflow-hidden">
+                                <div class="flex items-center text-green-700">
+                                    <i class="fas fa-check-circle mr-2"></i>
+                                    <span class="text-sm font-medium">连接成功</span>
+                                </div>
+                                <div class="progress-bar" style="width: 100%"></div>
+                            </div>
+                            <div id="errorResult" class="bg-red-50 border border-red-200 rounded-lg p-3 hidden relative overflow-hidden">
+                                <div class="flex items-center text-red-700">
+                                    <i class="fas fa-exclamation-circle mr-2"></i>
+                                    <span class="text-sm font-medium">连接失败: 请检查连接信息</span>
+                                </div>
+                                <div class="progress-bar" style="width: 100%"></div>
+                            </div>
+                        </div>
+                        <button onclick="showTestResult()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-button">
+                            连接测试
+                        </button>
+                    </div>
+                    <div class="absolute bottom-6 right-6">
+                        <button class="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-button">
+                            保存
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
