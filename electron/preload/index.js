@@ -1,16 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const md5 = require('md5-node');
 
 //登录
 const login = async (username, password) => {
-  let result = await ipcRenderer.invoke("login", username, password);
-  if (result.length) {
-    return {
-      success: true,
-      data: { username: result[0], message: "登录成功" },
-    };
-  } else {
-    return { success: false, errMsg: "用户名密码不正确" };
-  }
+ return await ipcRenderer.invoke("login", username, md5(password));
 };
 
 contextBridge.exposeInMainWorld("myAPI", {

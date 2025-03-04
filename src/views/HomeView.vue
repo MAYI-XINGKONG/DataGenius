@@ -34,18 +34,13 @@ interface FormState {
 }
 
 const formState = reactive<FormState>({
-    username: 'admin',
-    password: '123456',
+    username: '',
+    password: '',
 });
 const onFinish = async () => {
     let result = await (window as any).myAPI.login(formState.username, formState.password)
-    if (result.success) {
-        message.success('欢迎回来！' + result.data.username)
-    } else {
-        message.error(result.message);
-    }
+    result.code === 200 ? message.success(result.msg) : message.error(result.msg);
 };
-;
 </script>
 
 <style lang="scss" scoped>
