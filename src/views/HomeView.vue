@@ -26,6 +26,7 @@
 <script lang="ts" setup>
 import { reactive } from 'vue';
 import { message } from 'ant-design-vue';
+import { useRouter } from 'vue-router';
 
 interface FormState {
     username: string;
@@ -34,12 +35,22 @@ interface FormState {
 }
 
 const formState = reactive<FormState>({
-    username: '',
-    password: '',
-});
+    username: 'admin',
+    password: '123456',
+} as FormState);
+
+const router = useRouter();
+
 const onFinish = async () => {
     let result = await (window as any).myAPI.login(formState.username, formState.password)
-    result.code === 200 ? message.success(result.msg) : message.error(result.msg);
+    if (result.code === 200) {
+        message.success(result.msg, 1);
+        // 登录成功后跳转到主界面
+        router.push('/main_view/index');
+    } else {
+        message.error(result.msg, 2);
+    }
+
 };
 </script>
 
